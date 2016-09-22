@@ -1,27 +1,48 @@
-//****************LibrerÌas*****************
+//****************Librer√≠as*****************
 
 #include <stdio.h>
 #include <allegro5/allegro.h>
+#include <allegro5/allegro_font.h>
 #include <allegro5/allegro_image.h>
-#include <allegro5\allegro_primitives.h>
+#include <allegro5/allegro_ttf.h>
+#include <allegro5/allegro_primitives.h>
 #include <allegro5/allegro_audio.h>
 #include <allegro5/allegro_acodec.h>
+//#include <allegro5/allegro_native_dialog.h>
 #include <iostream>
-#include <conio.h>
+//#include <conio.h>
 #include <ctype.h>
+#include <stdlib.h>     /* srand, rand */
+#include <time.h>       /* time */
+#include <math.h>
+#include <wiringPi.h>
+#include <softTone.h>
 using namespace std;
 
 //******************************************
 //Definicion de las teclas que se utilizaran para el funcionamiento del juego
-#define _ENTER 0x10d	// ENTER 
+#define _ENTER 0x10d	// ENTER
 #define _IZQ  0x4b00	//Tecla izquierda
 #define _DER  0x4d00	//Tecla derecha
 
-typedef struct _bola {
-	int posx, posy, vx, vy;
+#define PIN 0
+
+//Variables que definen los pines de entrada de la RaspberryPi 3:
+//GPIO 17 es entrada 1 en WiringPi
+//GPIO 22 es entrada 3 en WiringPi
+int boton_salir = 1;
+int boton_reinicio = 3;
+//Variables que se utilizaran en el codigo para asignar los valores de las lecturas digitales de los pines 1 y 3
+int b_salir = 1;
+int b_reinicio = 1;
+float velocidadX = 15;
+float velocidadY = 10;
+
+struct _bola {
+	float posx, posy, vx, vy;
 };
-typedef struct _bloque {
-	int posx, posy;
+struct _bloque {
+	float posx, posy;
 	bool activo;
 	ALLEGRO_BITMAP *bitmap;
 };
@@ -33,30 +54,89 @@ _bloque Bloques[65];
 _bloque plataforma_;
 
 //DEFINICION DE PARAMETROS BASICOS
-int posx_inicial = 347, posy_inicial = 517, tamanox = 45, tamanoy = 18, limite_izq = tamanox, limite_der = tamanox * 13 - 1 + limite_izq,
-limite_sup = 1, limite_inf = tamanoy * 5 + 300, vidas = 3;
+int cont = 250;
+int userPos = 9; //esto es para ubicar la posicion en la que se imprimira el nombre de usuario por debajo de la pantalla
+int posx_inicial = 330, posy_inicial = 517, ancho_bloque = 45, altura_bloque = 18, limite_izq = ancho_bloque, limite_der = ancho_bloque * 13 - 1 + limite_izq,
+limite_sup = altura_bloque, limite_inf = altura_bloque * 5 + 435, vidas = 3, altura_inicial_bloques = 30, FPS = 500, cont_final = 0;
+int const maxFilas = 31, maxColumnas = 31;
+unsigned char opc, plat = 201;	//para que no de problemas se coloca el unsigned, de lo contrario se genera un warning pues se interpreta un numero negativo
+bool intento = false;	//esto es para evaluar si se perdio una vida
+								//***************Allegro********************
+bool reset, salir = false;	//Estas variables eventualmente se reemplazan con la senal proveniente de los botones
 
-//***************Allegro********************
+char username[33] = "Usuario:                        ";
 
 ALLEGRO_DISPLAY *display = NULL;
 ALLEGRO_BITMAP *buffer = NULL, *horizontal = NULL, *vertical = NULL, *b_morado = NULL, *b_rosa = NULL, *b_azul = NULL,
 *b_naranja = NULL, *b_verde = NULL, *plataforma = NULL, *esq_si = NULL, *esq_sd = NULL, *esq_ii = NULL, *esq_id = NULL,
-*marco_vida = NULL, *una_vida = NULL, *dos_vidas = NULL, *tres_vidas = NULL, *inicio = NULL, *presione = NULL;
+*marco_vida = NULL, *fallido = NULL, *perdio = NULL, *gano = NULL, *final_screen = NULL, *fondo = NULL, *cero_vidas = NULL, *una_vida = NULL, *dos_vidas = NULL, *tres_vidas = NULL, *inicio = NULL, *presione = NULL;
+
+ALLEGRO_FONT *fuente = al_load_font("stencil.ttf", 45, 0);
+ALLEGRO_FONT *user = al_load_font("courier.ttf", 23, 0);
 
 const ALLEGRO_COLOR transparente = al_map_rgb(0, 0, 0);
+const ALLEGRO_COLOR verde = al_map_rgb(0, 1, 0);
+
+char mapa[maxFilas][maxColumnas] = {
+	"stttttttttttttd",
+	"cMMMMMMMMMMMMMc",
+	"cRRRRRRRRRRRRRc",
+	"cAAAAAAAAAAAAAc",
+	"cVVVVVVVVVVVVVc",
+	"cNNNNNNNNNNNNNc",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c  x          c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c             c",
+	"c      P      c",
+	"itttttttttttk g",
+};
 
 //************************FUNCIONES************************
 
 void inicializar() {
 	bola.posx = posx_inicial;
 	bola.posy = posy_inicial;
-	bola.vx = 1;
-	bola.vy = 1;
+
+	srand(time(0));
+	bola.vx = rand() % 128;
+	bola.vx = (bola.vx + 12) / 100;
+	//cout << bola.vx << endl;
+
+	bola.vy = sqrt(2 - bola.vx*bola.vx); // La magnitud de la velocidad siempre sera sqrt(2)=1.4142
+
+    bola.vx = (bola.vx)*(velocidadX);
+	bola.vy = (bola.vy)*(velocidadY)*-1;
+	//cout << bola.vy;
+
+	plataforma_.posx = 300;
+	plataforma_.posy = limite_inf;
+	plataforma_.activo = true;
+	plataforma_.bitmap = plataforma;
 
 	for (int i = 0; i <= 4; i++) {
 		for (int j = 0; j <= 12; j++) {
-			Bloques[i * 13 + j].posy = i * tamanoy + limite_sup;
-			Bloques[i * 13 + j].posx = j * tamanox + limite_izq;
+			Bloques[i * 13 + j].posy = i * altura_bloque + altura_inicial_bloques;
+			Bloques[i * 13 + j].posx = j * ancho_bloque + limite_izq;
 			Bloques[i * 13 + j].activo = true;
 			// Asignacion de los colores a cada bloque segun la fila
 			if (i == 0) {
@@ -71,19 +151,49 @@ void inicializar() {
 			else if (i == 3) {
 				Bloques[i * 13 + j].bitmap = b_naranja;
 			}
-			else{
+			else {
 				Bloques[i * 13 + j].bitmap = b_verde;
 			}
 		}
 	}
-	plataforma_.activo = true;
-	plataforma_.posy = (limite_inf);
-	plataforma_.posx = 350;
 }
 
+void cargaArchivos() {
+	//librerias necesarias para inicializar el codigo
+	al_init_acodec_addon();
+	al_init_image_addon();
+	al_init_font_addon(); //Esta y la siguiente son para lograr mostrar texto en pantalla en Allegro
+	al_init_ttf_addon();
+	al_init_primitives_addon();
+	al_install_keyboard();
 
-//Funciones para los dibujos de la pantalla
-//*****************************************
+	display = al_create_display(680, 600);	//dimensiones de la pantalla de juego x,y
+	buffer = al_create_bitmap(680, 600);	//Buffer
+
+											//Carga de im√°genes
+	b_morado = al_load_bitmap("b_morado.png"); b_rosa = al_load_bitmap("b_rosa.png"); b_verde = al_load_bitmap("b_verde.png"); b_azul = al_load_bitmap("b_azul.png");
+	b_naranja = al_load_bitmap("b_naranja.png"); plataforma = al_load_bitmap("Plataforma.png"); horizontal = al_load_bitmap("horizontal.png");
+	vertical = al_load_bitmap("vertical.png"); esq_si = al_load_bitmap("esq_SI.png"); esq_id = al_load_bitmap("esq_ID.png"); esq_ii = al_load_bitmap("esq_II.png");
+	esq_sd = al_load_bitmap("esq_SD.png"); fallido = al_load_bitmap("fallido.png"); una_vida = al_load_bitmap("una_vida.png"); dos_vidas = al_load_bitmap("dos_vidas.png");
+	tres_vidas = al_load_bitmap("tres_vidas.png"); cero_vidas = al_load_bitmap("cero_vidas.png"); perdio = al_load_bitmap("perdio.png"); final_screen = al_load_bitmap("final.png"); gano = al_load_bitmap("gano.png"); fondo = al_load_bitmap("fondo.png"); inicio = al_load_bitmap("inicio.png"); presione = al_load_bitmap("presione.png");
+}
+
+void mostrar_plataforma() {   //se deben colocar argumentos en la funcion que pinten la plataforma en otro lugar dependiendo de la tecla que se presiono
+	ALLEGRO_KEYBOARD_STATE estadoTeclado;
+	al_get_keyboard_state(&estadoTeclado);
+	if (al_key_down(&estadoTeclado, ALLEGRO_KEY_LEFT)) {
+		if (plataforma_.posx > limite_izq) {
+			plataforma_.posx-=10;
+		}
+	}
+	if (al_key_down(&estadoTeclado, ALLEGRO_KEY_RIGHT)) {
+		if (plataforma_.posx < 580) {
+			plataforma_.posx+=10;
+		}
+	}
+	al_set_target_bitmap(buffer);
+	al_draw_bitmap(plataforma_.bitmap, plataforma_.posx, plataforma_.posy, 0);
+}
 
 void asignarVidas(int vidas) {	//Esta funcion es para evaluar la cantidad de vidas restante, y seleccionar el marco con los corazones pintados que sea apropiado
 	if (vidas == 1) {
@@ -97,158 +207,472 @@ void asignarVidas(int vidas) {	//Esta funcion es para evaluar la cantidad de vid
 	else if (vidas == 3) {
 		marco_vida = tres_vidas;
 	}
+	else if (vidas == 0) {
+		marco_vida = cero_vidas;
+	}
 }
 
 void mostrar_bola() { //analiza las coordenadas en X y en Y para pintar la bola
 
-	//ACTUALIZA LA POSICION DE LA BOLA
+					  //ACTUALIZA LA POSICION DE LA BOLA
 	bola.posx += bola.vx;
 	bola.posy += bola.vy;
 	//MUESTRA LA BOLA
-	al_draw_filled_circle(bola.posx, bola.posy, 5.0, al_map_rgb_f(1.0, 0.0, 1.0));
+	al_draw_filled_circle(bola.posx, bola.posy, 5.0, al_map_rgb_f(0.5, 0.5, 1.0));
 	//REVISA SI LA BOLA SE ENCUENTRA EN LOS LIMITES DE LA PANTALLA
 	if ((bola.posx >= limite_der) && (bola.vx > 0)) {
-		bola.vx = -1;
+		bola.vx = bola.vx*-1;
 	}
 	if ((bola.posx <= limite_izq) && (bola.vx < 0)) {
-		bola.vx = 1;
+		bola.vx = bola.vx*-1;
 	}
 	if ((bola.posy <= limite_sup) && (bola.vy < 0)) {
-		bola.vy = 1;
+		bola.vy = bola.vy*-1;
 	}
 	if ((bola.posy >= limite_inf) && (bola.vy > 0)) {
-		bola.vy = -1;
+		bola.vy = bola.vy*-1;
 	}
 }
 
-void mostrar_bloques() {
+void mostrar_bloques(int cont_final) {
+	cont_final = 0;
 	for (int i = 0; i < 65; i++) {
 		if (Bloques[i].activo == true) {
 			al_set_target_bitmap(buffer);
-			al_draw_bitmap(Bloques[i].bitmap, Bloques[i].posx, Bloques[i].posy, NULL);
+			al_draw_bitmap(Bloques[i].bitmap, Bloques[i].posx, Bloques[i].posy, 0);
 		}
 	}
 }
 
-void mostrar_plataforma() {   //se deben colocar argumentos en la funcion que pinten la plataforma en otro lugar dependiendo de la tecla que se presiono
-	al_set_target_bitmap(buffer);
-	al_draw_bitmap(plataforma, plataforma_.posx, plataforma_.posy, NULL); //estos numeros por los que se multiplica, definen el tamano de la imagen que cree
+bool revisar_final() {
+	// ESTA FUNCION REVISA SI TODOS LOS BLOQUES ESTAN .activo=FALSE
+	int end = 0;
+	for (int k = 0; k < 65; k++) {
+		if (Bloques[k].activo == true) {
+			end++;
+		}
+	}
+	if (end == 0) { return true; }
+	else { return false; }
 }
 
-//Para la pantalla inicial
 void PantallaInicial() {
 	al_set_target_bitmap(buffer);
-	al_draw_bitmap(inicio, 1, 1, NULL);
+	al_draw_bitmap(inicio, 1, 1, 0);
+
+}
+
+void dibujarFondo() {
+	al_set_target_bitmap(buffer);
+	al_draw_bitmap(fondo, 1, 1, 0);
+}
+
+void ganoJuego() {
+	al_set_target_bitmap(buffer);
+	al_draw_bitmap(gano, 150, 200, 0);
+}
+
+void falloVida() {
+	al_set_target_bitmap(buffer);
+	al_draw_bitmap(fallido, 150, 170, 0);
+}
+
+void pantallaFinal() {
+	al_set_target_bitmap(buffer);
+	al_draw_bitmap(final_screen, 1, 1, 0);
+}
+
+float valor_absoluto(float eval) {
+	if (eval < 0) return -1 * eval;
+	else return eval;
+}
+
+float signo(float eval) {
+	if (eval < 0) return -1;
+	else return 1;
+}
+
+void rebote_90(bool izq, bool der, bool up, bool down) {
+	float vx = bola.vx, vy = bola.vy;
+	if (izq) {
+		bola.vx = valor_absoluto(vy)*-1;
+		bola.vy = valor_absoluto(vx)*signo(vy);
+	}
+	if (der) {
+		bola.vx = valor_absoluto(vy);
+		bola.vy = valor_absoluto(vx)*signo(vy);
+	}
+	if (up) {
+		bola.vy = valor_absoluto(vx)*-1;
+		bola.vx = valor_absoluto(vy)*signo(vx);
+	}
+	if (down) {
+		bola.vy = valor_absoluto(vx);
+		bola.vx = valor_absoluto(vy)*signo(vx);
+	}
 }
 
 void revisar_colision() {
-	//ESTA FUNCION REVISA SI HAY COLISION CON UN BLOQUE Y LO MODIFICA .activo=FALSE
-	//AUN NO GENERA EL REBOTE CON CADA BLOQUE
+
+	bool izq = false, der = false, down = false, up = false;
 	for (int i = 0; i < 65; i++) {
-		if ((bola.posx >= Bloques[i].posx) && (bola.posx <= (Bloques[i].posx + tamanox)) && (bola.posy >= Bloques[i].posy) && (bola.posy <= (Bloques[i].posy + tamanoy)) && (Bloques[i].activo == true)) {
+		izq = false; der = false; down = false; up = false;
+		if ((bola.posx + bola.vx >= Bloques[i].posx) && (bola.posx + bola.vx <= (Bloques[i].posx + ancho_bloque - 1)) &&
+			(bola.posy + bola.vy >= Bloques[i].posy) && (bola.posy + bola.vy <= (Bloques[i].posy + altura_bloque - 1)) && (Bloques[i].activo == true)) {
 			Bloques[i].activo = false;
+            softToneWrite(PIN,440);
+            delay(100);
+            softToneWrite(PIN,0);
+			if (bola.posx < Bloques[i].posx + 1.42*1.5) {	//COLISION POR LA IZQUIERDA DEL BLOQUE
+				izq = true; //colision por la izquierda
+				bola.vx = bola.vx*-1;
+			}
+			if (bola.posx > Bloques[i].posx + ancho_bloque + -1.42*1.5) {	//COLISION POR LA IZQUIERDA DEL BLOQUE
+				der = true; //colision por la derecha
+				bola.vx = bola.vx*-1;
+			}
+			if (bola.posy < Bloques[i].posy + 1.42*1.5) {	//COLISION POR LA IZQUIERDA DEL BLOQUE
+				up = true; //colision por arriba
+				bola.vy = bola.vy*-1;
+			}
+			if (bola.posy > Bloques[i].posy + altura_bloque + -1.42*1.5) {	//COLISION POR LA IZQUIERDA DEL BLOQUE
+				down = true; //colision por debajo
+				bola.vy = bola.vy*-1;
+			}
+			rebote_90(izq, der, up, down);
+			//cout << endl << "izq     der     up      down" << endl;
+			//cout << izq << "\t" << der << "\t" << up << "\t" << down << endl;
 		}
 	}
 }
 
-//pantalla
-//FunciÛn que se encarga de asignarle el buffer a la pantalla
-void actualizar_pantalla(){
+void dibujarMarcos() {	//Dibuja el marco con la vida correspondiente
+	int fila, columna;
+	for (fila = 0; fila < maxFilas; fila++) {
+		for (columna = 0; columna < maxColumnas; columna++) {
+			asignarVidas(vidas); //para saber que marco se debe usar
+			if (mapa[fila][columna] == 's') { //Para imprimir la esquina superior izquierda
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(esq_si, columna * ancho_bloque, fila * altura_bloque, 0);
+			}
+			else if (mapa[fila][columna] == 'd') { //Para imprimir la esquina superior derecha
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(esq_sd, columna * ancho_bloque, fila * altura_bloque, 0);
+			}
+			else if (mapa[fila][columna] == 'i') { //Para imprimir la esquina inferior izquierda
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(esq_ii, columna * ancho_bloque, fila * altura_bloque, 0);
+			}
+			else if (mapa[fila][columna] == 'g') { //Para imprimir la esquina inferior derecha
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(esq_id, columna * ancho_bloque, fila * altura_bloque, 0);
+			}
+			else if (mapa[fila][columna] == 'c') { //Esto para dibujar la pared
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(vertical, columna * ancho_bloque, fila * altura_bloque, 0);
+			}
+			else if (mapa[fila][columna] == 't') { //Esto para dibujar el techo
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(horizontal, columna * ancho_bloque, fila * altura_bloque, 0);
+			}
+			else if (mapa[fila][columna] == 'k') { //Esto para dibujar el techo
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(marco_vida, columna * ancho_bloque, fila * altura_bloque, 0);
+			}
+		}
+	}
+
+}
+
+void actualizar_pantalla() {
+	//pantalla
+	//Funci√≥n que se encarga de asignarle el buffer a la pantalla
 	al_set_window_title(display, "Laboratorio de Estructura de Microprocesadores - Proyecto 2");
 	al_set_target_bitmap(al_get_backbuffer(display));
 	al_draw_bitmap(buffer, 0, 0, 0);
-	al_flip_display();  //Necesario para que actualice la interfaz gr·fica en la pantalla
-	al_clear_to_color(transparente); //Limpia la pantalla
+	al_flip_display();  //Necesario para que actualice la interfaz gr√°fica en la pantalla
+	al_clear_to_color(al_map_rgb(0, 0, 0)); //Limpia la pantalla
+}
+
+void presionarEnter(ALLEGRO_KEYBOARD_STATE &estadoTeclado, ALLEGRO_EVENT_QUEUE *&evento_cola, ALLEGRO_EVENT &eventos) {
+	bool ciclo = 1;
+	while (ciclo) {
+		al_wait_for_event(evento_cola, &eventos);
+		al_get_keyboard_state(&estadoTeclado);
+		if (al_key_down(&estadoTeclado, ALLEGRO_KEY_ENTER)) {
+			ciclo = 0;
+		}
+	}
+}
+
+void perdioJuego() {
+	al_set_target_bitmap(buffer);
+	dibujarFondo();
+	dibujarMarcos();
+	mostrar_plataforma();
+	al_draw_bitmap(perdio, 150, 200, 0);
+}
+
+void presioneX(ALLEGRO_KEYBOARD_STATE &estadoTeclado, ALLEGRO_EVENT_QUEUE *&evento_cola, ALLEGRO_EVENT &eventos) {
+	int fila, columna;
+
+	al_set_target_bitmap(buffer); //Selecciona el bitmap que se va a utilizar
+	al_clear_to_color(transparente); //Limpia el buffer que se selecciono
+	dibujarFondo();
+	dibujarMarcos();
+	mostrar_bloques(cont_final);
+	mostrar_plataforma();
+	mostrar_bola();
+	if (intento) {	//Esto es para evaluar cuando se debe imprimir el banner de intento fallido
+		falloVida();
+	}
+
+	for (fila = 0; fila < maxFilas; fila++) {
+		for (columna = 0; columna < maxColumnas; columna++) {
+			if (mapa[fila][columna] == 'x') { //Para imprimir x para continuar
+				al_set_target_bitmap(buffer);
+				al_draw_bitmap(presione, columna * 50, fila * 18, 0); //estos numeros por los que se multiplica, definen el tamano de la imagen que cree
+
+			}
+		}
+	}
+
+	actualizar_pantalla(); //Se mantiene ac√° hasta presionar X
+
+						   //Evento presionar X
+	bool ciclo = 1;
+	while (ciclo) {
+		al_wait_for_event(evento_cola, &eventos);
+		al_get_keyboard_state(&estadoTeclado);
+		if (al_key_down(&estadoTeclado, ALLEGRO_KEY_X)) {
+			ciclo = 0;
+		}
+	}
+
+	al_set_target_bitmap(buffer); //Selecciona el bitmap que se va a utilizar
+	al_clear_to_color(transparente); //Limpia el buffer que se seleccion√≥
+
+}
+
+void colision_plataforma(ALLEGRO_KEYBOARD_STATE &estadoTeclado, ALLEGRO_EVENT_QUEUE *&evento_cola, ALLEGRO_EVENT &eventos) {
+	if ((bola.posy >= limite_inf - 5) && (bola.posx >= (plataforma_.posx)) && (bola.posx <= (plataforma_.posx + 68))) {
+		if (bola.vy>0) {
+			vidas = vidas;
+			intento = false;
+		}
+	}
+	else if (bola.posy >= limite_inf) {
+		vidas--;
+		intento = true;
+		if (vidas != 0) {
+			inicializar();
+			presioneX(estadoTeclado, evento_cola, eventos);
+		}
+	}
+}
+
+void usuario(ALLEGRO_KEYBOARD_STATE &estadoTeclado, ALLEGRO_EVENT_QUEUE *&evento_cola, ALLEGRO_EVENT &eventos, ALLEGRO_FONT *fuente) {
+
+	//int userPos = 8; //esta variable es para modificar la matriz de usuario e imprimir el nombre debajo de la pantalla
+	//funcion para imprimir el nombre de usuario
+	//5char username[33] = "Usuario:                        ";
+	while (true) {
+			al_wait_for_event(evento_cola, &eventos);
+			al_get_keyboard_state(&estadoTeclado);
+			if (al_key_down(&estadoTeclado, ALLEGRO_KEY_ENTER)) {
+				break;
+			}
+			else {
+				//Se limitara a 12 caracteres para escribir el nombre de usuario
+				//userPos++;
+				al_set_target_bitmap(buffer);
+				if (al_key_down(&estadoTeclado, ALLEGRO_KEY_A)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "A"); username[userPos] = 'a'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_B)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "B"); username[userPos] = 'b'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_C)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "C"); username[userPos] = 'c'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_D)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "D"); username[userPos] = 'd'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_E)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "E"); username[userPos] = 'e'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_F)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "F"); username[userPos] = 'f'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_G)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "G"); username[userPos] = 'g'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_H)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "H"); username[userPos] = 'h'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_I)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont + 7, 340, 0, "I"); username[userPos] = 'i'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_J)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "J"); username[userPos] = 'j'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_K)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "K"); username[userPos] = 'k'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_L)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "L"); username[userPos] = 'l'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_M)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "M"); username[userPos] = 'm'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_N)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "N"); username[userPos] = 'n'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_O)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "O"); username[userPos] = 'o'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_P)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "P"); username[userPos] = 'p'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_Q)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "Q"); username[userPos] = 'q'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_R)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "R"); username[userPos] = 'r'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_S)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "S"); username[userPos] = 's'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_T)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "T"); username[userPos] = 't'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_U)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "U"); username[userPos] = 'u'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_V)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "V"); username[userPos] = 'v'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_W)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "W"); username[userPos] = 'x'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_X)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "X"); username[userPos] = 'x'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_Y)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "Y"); username[userPos] = 'y'; }
+				else if (al_key_down(&estadoTeclado, ALLEGRO_KEY_Z)) { al_draw_text(fuente, al_map_rgb(172, 190, 250), cont, 340, 0, "Z"); username[userPos] = 'z'; }
+				actualizar_pantalla();
+				al_rest(0.2);
+			}
+			cont = cont + 10;
+			userPos++;
+
+	}
+	cont=250;
+	userPos=6;
+}
+
+void juego(ALLEGRO_KEYBOARD_STATE &estadoTeclado, ALLEGRO_EVENT_QUEUE *&evento_cola, ALLEGRO_EVENT &eventos, ALLEGRO_FONT *fuente, ALLEGRO_FONT *user, ALLEGRO_EVENT_QUEUE *cola_timer, ALLEGRO_EVENT *evento_timer) {
+	//COMIENZA PANTALLA INICIAL Y EL CICLO DEL JUEGO
+	al_rest(0.0001);
+	PantallaInicial(); //aqui debemos llamar a la funcion que imprima la pantalla inicial
+	actualizar_pantalla();
+	//INICIALIZACION DE LOS BLOQUES, BOLA Y PLATAFORMA
+	usuario(estadoTeclado, evento_cola, eventos, fuente);
+	//Ciclo que me saca del ENTER
+	presionarEnter(estadoTeclado, evento_cola, eventos);
+	inicializar();
+	presioneX(estadoTeclado, evento_cola, eventos);
+	//char username[19] = "Usuario:          ";
+	//username[9] = 'A';
+	while ((!revisar_final()) && (vidas>0)) {
+		//LIMPIAR PANTALLA
+		al_get_display_refresh_rate(display);
+		al_wait_for_event(cola_timer, evento_timer);
+		if (evento_timer->type == ALLEGRO_EVENT_TIMER) {
+			al_set_target_bitmap(buffer);	//Selecciona el bitmap que se va a utilizar
+			al_clear_to_color(transparente); //Limpia el buffer que se seleccion√≥
+											 //PINTAR OBJETOS
+			dibujarFondo();
+			mostrar_bloques(cont_final);
+			dibujarMarcos();
+			colision_plataforma(estadoTeclado, evento_cola, eventos);
+			mostrar_bola();
+			mostrar_plataforma();
+			al_draw_text(user, al_map_rgb(172, 190, 250), 20, 560, 0, username);
+			//EJECUCION DE LA LOGICA Y ACTUALIZAR LA PANTALLA
+			revisar_colision();
+			actualizar_pantalla();
+			//al_rest(0.0001);
+		}
+	}
+
+	if (vidas>0) {
+		//si esta variable es falsa, es porque se destruyeron todos los bloques
+		ganoJuego();
+		actualizar_pantalla();
+	}
+	else {
+		//Se llego al final de las vidas
+		perdioJuego();
+		actualizar_pantalla();
+	}
+
+	//En cualquiera de los casos
+
+	//Esperar el ENTER para continuar a la pantalla final
+	presionarEnter(estadoTeclado, evento_cola, eventos);
+
+	//llamar a la funcion que imprime la pantalla final
+	pantallaFinal();
+	actualizar_pantalla();
+	al_rest(0.2);
+
+	////***************
+}
+
+void salirJuego(ALLEGRO_EVENT_QUEUE *&evento_cola, ALLEGRO_TIMER *timer) {
+	//En este momento se borra todo lo que hay en pantalla
+	//Se deben aplicar estos destroy para liberar la memoria que se utiliza en los bitmap, el display y el timer
+	al_destroy_bitmap(b_morado); al_destroy_bitmap(b_azul); al_destroy_bitmap(b_rosa); al_destroy_bitmap(b_naranja); al_destroy_bitmap(b_verde);
+	al_destroy_bitmap(plataforma); al_destroy_bitmap(horizontal); al_destroy_bitmap(vertical); al_destroy_bitmap(buffer); al_destroy_bitmap(esq_si);
+	al_destroy_bitmap(esq_sd); al_destroy_bitmap(esq_ii); al_destroy_bitmap(esq_id); al_destroy_bitmap(fondo); al_destroy_bitmap(una_vida); al_destroy_bitmap(dos_vidas);
+	al_destroy_bitmap(tres_vidas); al_destroy_bitmap(cero_vidas); al_destroy_bitmap(fallido); al_destroy_bitmap(perdio); al_destroy_font(fuente); al_destroy_font(user); al_destroy_bitmap(final_screen); al_destroy_bitmap(gano); al_destroy_display(display); al_destroy_bitmap(inicio); al_destroy_bitmap(presione); al_destroy_timer(timer);
+	al_destroy_event_queue(evento_cola);
 }
 
 
 //**************Estado principal del juego********************
 
 int main(int argc, char **argv) {
+    wiringPiSetup ();
+    softToneCreate(PIN);
+    pinMode (boton_salir, INPUT);
+    pinMode (boton_reinicio, INPUT);
+    b_salir = digitalRead(boton_salir);
+    b_reinicio = digitalRead(boton_reinicio);
 	if (!al_init()) {
 		fprintf(stderr, "failed to initialize allegro!\n");
 		return -1;
 	}
+	cargaArchivos();
 
-	//para manejar el teclado
-	//ALLEGRO_KEYBOARD_STATE keyState;
-	//ALLEGRO_TIMER *timer = al_create_timer(0.01 / 60);
-	//ALLEGRO_EVENT_QUEUE *evento_cola = al_create_event_queue();
-	//al_register_event_source(evento_cola, al_get_keyboard_event_source());
-	//al_register_event_source(evento_cola, al_get_timer_event_source(timer));
+	//Rutinas del teclado
+	ALLEGRO_KEYBOARD_STATE estadoTeclado;
+	ALLEGRO_EVENT eventos;
+	ALLEGRO_EVENT evento_timer;
+	ALLEGRO_EVENT_QUEUE *evento_cola = al_create_event_queue();
+	ALLEGRO_FONT *fuente = al_load_font("stencil.ttf", 45, 0);
+	ALLEGRO_FONT *user = al_load_font("courier.ttf", 24, 0);
+	al_register_event_source(evento_cola, al_get_keyboard_event_source());
 
-	al_init_acodec_addon();
-	al_init_image_addon(); //Necesario para que la imagen se cargue
-						   //Teclado y timer
-	al_init_primitives_addon();
-	al_install_keyboard();
-	//al_start_timer(timer);
+	//PRUEBAS TIMER
+	ALLEGRO_TIMER *timer = al_create_timer(1.0 / FPS); //1/30 por cada actualizacion
+	ALLEGRO_EVENT_QUEUE *cola_timer = al_create_event_queue();
+	al_start_timer(timer);
+	al_register_event_source(cola_timer, al_get_timer_event_source(timer));
 
-	display = al_create_display(680, 610);	//dimensiones de la pantalla de juego x,y
+	//*******Para integrar las se√±ales del Reset y el salir que vienen con la Raspberry Pi
+	//bool reset, salir = false;	//Estas variables eventualmente se reemplazan con la senal proveniente de los botones
 
-	buffer = al_create_bitmap(680, 610);	//Buffer
 
-	//Carga de im·genes
-	b_morado = al_load_bitmap("b_morado.bmp");
-	b_rosa = al_load_bitmap("b_rosa.bmp");
-	b_verde = al_load_bitmap("b_verde.bmp");
-	b_azul = al_load_bitmap("b_azul.bmp");
-	b_naranja = al_load_bitmap("b_naranja.bmp");
-	plataforma = al_load_bitmap("Plataforma.bmp");
-	horizontal = al_load_bitmap("horizontal.png");
-	vertical = al_load_bitmap("vertical.png");
-	esq_si = al_load_bitmap("esq_SI.png");
-	esq_id = al_load_bitmap("esq_ID.png");
-	esq_ii = al_load_bitmap("esq_II.png");
-	esq_sd = al_load_bitmap("esq_SD.png");
-	una_vida = al_load_bitmap("una_vida.png");
-	dos_vidas = al_load_bitmap("dos_vidas.png");
-	tres_vidas = al_load_bitmap("tres_vidas.png");
-	inicio = al_load_bitmap("inicio.png");
-	presione = al_load_bitmap("presione.png");
+	while (true) {
+		if (salir) {
+			salirJuego(evento_cola, timer);
+			return 0;
+		}
+		else if (reset || (!reset && !salir)) {
+			//Esta funcion contiene toda la logica de funcionamiento del juego
+			juego(estadoTeclado, evento_cola, eventos, fuente, user, cola_timer, &evento_timer);
+			//Despues de imprimir la pantalla inicial, retorna al inicio del ciclo, donde vuelve a esperar por los botones
+			vidas = 3;
+			intento = false;
+			//reiniciarUsuario();
+			char username[33] = "Usuario:                        ";
+			//userPos = 8;
+			al_draw_text(user, al_map_rgb(172, 190, 250), 20, 560, 0, username);
+			al_set_target_bitmap(buffer); //Selecciona el bitmap que se va a utilizar
+			al_clear_to_color(transparente); //Limpia el buffer que se selecciono
+			pantallaFinal();
+			actualizar_pantalla();
+			reset = false;
+            salir = false;
+			while (reset == false && salir == false) { //si no hay ningun boton presionado, se queda alli hasta que presione alguno
+				//con la maquina de estados
+				//************ESTO SE IMPLEMENTA CON LA LOGICA DE LA FSM ****************
+				//esto simula la espera por un boton al finalizar el programa
+				b_salir = digitalRead(boton_salir);
+                b_reinicio = digitalRead(boton_reinicio);
+                if (b_salir == LOW){
+                    salir = true;
+                    }
+                else{
+                    salir = false;
+                    }
+				if (b_reinicio == LOW){
+                    reset = true;
+                    }
+                else{
+                    reset = false;
+                    }
 
-	PantallaInicial(); //aqui debemos llamar a la funcion que imprima la pantalla inicial
-	actualizar_pantalla();
-	al_rest(2.0); //este al rest se debe sustituir por un: digite el nombre de usuario
-				  //entonces cuando se le da ENTER dirige automaticamente a la pantalla inicial
-	inicializar();
-
-	for (int h = 0; h < 2000; h++) {
-		al_set_target_bitmap(buffer); //Selecciona el bitmap que se va a utilizar
-		al_clear_to_color(transparente); //Limpia el buffer que se seleccionÛ
-		mostrar_bloques();
-		mostrar_plataforma();
-		mostrar_bola();
-		actualizar_pantalla();
-		revisar_colision();
-		al_rest(0.001);
+				}
+		}
+		//Aqui vuelve a evaluar la condicion de los botones
 	}
 
-	//**********************************************
-	//Aqui va el codigo del juego
-	//**********************************************
-
-
-	//Se deben aplicar estos destroy para liberar la memoria que se utiliza en los bitmap, el display y el timer
-	al_destroy_bitmap(b_morado);
-	al_destroy_bitmap(b_azul);
-	al_destroy_bitmap(b_rosa);
-	al_destroy_bitmap(b_naranja);
-	al_destroy_bitmap(b_verde);
-	al_destroy_bitmap(plataforma);
-	al_destroy_bitmap(horizontal);
-	al_destroy_bitmap(vertical);
-	al_destroy_bitmap(buffer);
-	al_destroy_bitmap(esq_si);
-	al_destroy_bitmap(esq_sd);
-	al_destroy_bitmap(esq_ii);
-	al_destroy_bitmap(esq_id);
-	al_destroy_bitmap(una_vida);
-	al_destroy_bitmap(dos_vidas);
-	al_destroy_bitmap(tres_vidas);
-	al_destroy_display(display);
-	al_destroy_bitmap(inicio);
-	al_destroy_bitmap(presione);
+	//En este momento se cierra la consola
 	return 0;
 }
 
